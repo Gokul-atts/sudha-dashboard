@@ -24,7 +24,10 @@ export function validateDataset(data) {
     if (!data.cities.includes(record.city) || !data.years.includes(record.period) || typeof record.month !== 'string') {
       throw new Error('The API contains an invalid city or period.');
     }
-    for (const key of ['total', 'booked', 'notBooked', 'procedure', 'pending', 'progress']) {
+    const required = ['total', 'booked', 'procedure'];
+    const keys = [...required, 'notBooked', 'pending', 'progress', 'visited', 'leadsDropout', 'appointmentDropout', 'opDropout'];
+    for (const key of keys) {
+      if (!required.includes(key) && (record[key] === null || record[key] === undefined)) continue;
       if (!Number.isInteger(record[key]) || record[key] < 0) throw new Error(`Invalid ${key} count in ${record.city}.`);
     }
   }
@@ -52,14 +55,18 @@ export function getSelection(data, city, year, month) {
   const records = data.records.filter(record => record.city === city && record.period === year &&
     (month === 'All' || record.month === month));
   const totals = records.reduce((sum, record) => {
-    for (const key of Object.keys(sum)) sum[key] += record[key];
+    for (const key of Object.keys(sum)) {
+      if (typeof record[key] === 'number') sum[key] = (sum[key] ?? 0) + record[key];
+    }
     return sum;
-  }, { total: 0, booked: 0, notBooked: 0, procedure: 0, pending: 0, progress: 0 });
+  }, { total: 0, booked: 0, notBooked: null, procedure: 0, pending: null, progress: null,
+    visited: null, leadsDropout: null, appointmentDropout: null, opDropout: null });
   const sheet = data.sheets.find(item => item.city === city);
   const headers = sheet.headers.map(normalize);
   const yearColumn = headers.indexOf('year');
   const monthColumn = headers.indexOf('month');
   const rows = sheet.rows.filter(row => normalizeYear(row[yearColumn]) === year &&
     (month === 'All' || normalizeMonth(row[monthColumn]) === month));
-  return { records, totals, headers: sheet.headers, rows };
+  return { records, totals, headers: sheet.headers, rows, schema: sheet.schema ||
+    (headers.includes('allleads') || headers.includes('totalleads') ? 'leads' : 'patients') };
 }
