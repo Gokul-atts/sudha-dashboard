@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { fetchDashboard, getSelection, months } from './api.js';
+import { DASHBOARD_TIMEOUT_MS, fetchDashboard, getSelection, months, sumAvailableCounts } from './api.js';
 
 const number = new Intl.NumberFormat('en-IN');
 const format = value => value === null || value === undefined ? '—' : number.format(value);
@@ -43,9 +43,9 @@ function TrendChart({ records, activeMonth, isLeads }) {
     return {
       month,
       rows,
-      leadsDropout: rows.reduce((sum, row) => sum + (row.leadsDropout ?? row.notBooked ?? 0), 0),
-      appointmentDropout: rows.reduce((sum, row) => sum + (row.appointmentDropout ?? row.pending ?? 0), 0),
-      opDropout: rows.reduce((sum, row) => sum + (row.opDropout ?? 0), 0)
+      leadsDropout: sumAvailableCounts(rows, isLeads ? 'leadsDropout' : 'notBooked'),
+      appointmentDropout: sumAvailableCounts(rows, isLeads ? 'appointmentDropout' : 'pending'),
+      opDropout: sumAvailableCounts(rows, 'opDropout')
     };
   }).filter(point => point.rows.length && (activeMonth === 'All' || point.month === activeMonth));
   const max = Math.max(1, ...points.map(point => Math.max(point.leadsDropout, point.appointmentDropout, point.opDropout)));
@@ -62,14 +62,18 @@ function TrendChart({ records, activeMonth, isLeads }) {
     { key: 'opDropout', label: 'OP Dropout', color: '#ef4444' }
   ];
   if (!points.length) return <div className="chart-empty">{records.some(row => row.month === 'All') ? 'Monthly detail is not available for this year.' : 'No monthly data for this selection.'}</div>;
+  const availableSeries = series.filter(item => points.some(point => point[item.key] !== null));
+  const unavailableSeries = series.filter(item => points.some(point => point[item.key] === null));
+  if (!availableSeries.length) return <div className="chart-empty">Dropout counts are not available for this selection.</div>;
   return <div className="trend-content"><svg className="trend" viewBox="0 0 622 237" role="img" aria-label="Monthly dropout activity breakdown">
     {[0, 1, 2, 3, 4].map(tick => { const y = top + height - height * tick / 4; return <g key={tick}><line x1={left} x2={left + width} y1={y} y2={y} stroke="#ededf1" strokeDasharray={tick ? '3 4' : undefined} /><text x={left - 10} y={y + 4} textAnchor="end" className="axis-label">{format(tick * step)}</text></g>; })}
-    {points.map((point, index) => { const x = left + groupWidth * (index + .5); return <g key={point.month}>{series.map((item, i) => { const barHeight = point[item.key] / ceiling * height; return <rect key={item.key} x={x + (i - 1.5) * (barWidth + 2)} y={top + height - barHeight} width={barWidth} height={barHeight} rx="3" fill={item.color} tabIndex="0" aria-label={`${point.month} ${item.label}: ${point[item.key]}`}><title>{point.month} · {item.label}: {format(point[item.key])}</title></rect>; })}<text x={x} y={top + height + 23} textAnchor="middle" className="axis-label">{point.month.slice(0, 3)}</text></g>; })}
-  </svg><div className="trend-legend">{series.map(item => <span key={item.key}><i style={{ background: item.color }} />{item.label}</span>)}</div></div>;
+    {points.map((point, index) => { const x = left + groupWidth * (index + .5); return <g key={point.month}>{availableSeries.map((item, i) => { if (point[item.key] === null) return null; const barHeight = point[item.key] / ceiling * height; return <rect key={item.key} x={x + (i - availableSeries.length / 2) * (barWidth + 2)} y={top + height - barHeight} width={barWidth} height={barHeight} rx="3" fill={item.color} tabIndex="0" aria-label={`${point.month} ${item.label}: ${point[item.key]}`}><title>{point.month} · {item.label}: {format(point[item.key])}</title></rect>; })}<text x={x} y={top + height + 23} textAnchor="middle" className="axis-label">{point.month.slice(0, 3)}</text></g>; })}
+  </svg><div className="trend-legend">{availableSeries.map(item => <span key={item.key}><i style={{ background: item.color }} />{item.label}</span>)}</div>{unavailableSeries.length > 0 && <p className="trend-legend" role="status">Missing counts: {unavailableSeries.map(item => item.label).join(', ')} (one or more months).</p>}</div>;
 }
 
 export default function App() {
   const [data, setData] = useState(null), [loading, setLoading] = useState(true), [error, setError] = useState('');
+  const [slowLoading, setSlowLoading] = useState(false);
   const [city, setCity] = useState(''), [year, setYear] = useState(''), [mode, setMode] = useState('Year'), [month, setMonth] = useState('All'), [updated, setUpdated] = useState('');
   const [activeSection, setActiveSection] = useState('overview');
   const request = useRef(null);
@@ -113,24 +117,26 @@ export default function App() {
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
 
-  async function refresh() {
+  async function refresh(forceRefresh = false) {
     request.current?.abort();
     const controller = new AbortController();
     request.current = controller;
-    const timeout = setTimeout(() => controller.abort('timeout'), 45000);
-    setLoading(true); setError('');
+    const timeout = setTimeout(() => controller.abort('timeout'), DASHBOARD_TIMEOUT_MS);
+    const slowTimer = setTimeout(() => { if (request.current === controller) setSlowLoading(true); }, 15000);
+    setLoading(true); setSlowLoading(false); setError('');
     try {
-      const next = await fetchDashboard(controller.signal);
+      const next = await fetchDashboard(controller.signal, { forceRefresh });
       if (controller.signal.aborted) return;
       setData(next); setCity(previous => next.cities.includes(previous) ? previous : next.cities[0]);
       setYear(previous => next.years.includes(previous) ? previous : next.years[0]);
-      setUpdated(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+      const fetchedAt = new Date(next.generatedAt || Date.now());
+      setUpdated((Number.isNaN(fetchedAt.getTime()) ? new Date() : fetchedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
     } catch (cause) {
-      if (!controller.signal.aborted || controller.signal.reason === 'timeout') setError(controller.signal.reason === 'timeout' ? 'Google Sheet took too long to respond. Please retry.' : cause.message);
-    } finally { clearTimeout(timeout); if (request.current === controller) setLoading(false); }
+      if (request.current === controller && (!controller.signal.aborted || controller.signal.reason === 'timeout')) setError(controller.signal.reason === 'timeout' ? 'Google Sheet did not respond within 90 seconds. Please try again.' : cause.message);
+    } finally { clearTimeout(timeout); clearTimeout(slowTimer); if (request.current === controller) { setLoading(false); setSlowLoading(false); } }
   }
   useEffect(() => { refresh(); return () => request.current?.abort(); }, []);
-  if (!data) return <div className="initial-state"><Brand /><div className="initial-card"><div className="initial-icon"><Icon name="sheet" size={30} /></div><h1>Patient overview</h1><p role={error ? 'alert' : 'status'}>{error || 'Connecting to your Google Sheet…'}</p>{error ? <button className="primary-button" disabled={loading} onClick={refresh}>Try again</button> : <div className="loading-line" />}</div></div>;
+  if (!data) return <div className="initial-state"><Brand /><div className="initial-card"><div className="initial-icon"><Icon name="sheet" size={30} /></div><h1>Patient overview</h1><p role={error ? 'alert' : 'status'}>{error || (slowLoading ? 'Google Sheet is still responding. The first load may take up to 90 seconds…' : 'Connecting to your Google Sheet…')}</p>{error ? <button className="primary-button" disabled={loading} onClick={() => refresh()}>Try again</button> : <div className="loading-line" />}</div></div>;
   const availableYears = data.years.filter(value => data.records.some(record => record.city === city && record.period === value));
   const activeYear = availableYears.includes(year) ? year : availableYears[0];
   const activeMonth = mode === 'Month' ? month : 'All';
@@ -161,7 +167,8 @@ export default function App() {
   return <div className="app-shell">
     <aside className="sidebar" aria-label="Workspace"><Brand /><div className="sidebar-label">WORKSPACE</div><a className={`nav-item ${activeSection === 'overview' ? 'active' : ''}`} href="#overview" onClick={handleNavClick('overview')}><Icon name="grid" />Overview{activeSection === 'overview' && <span className="nav-dot" />}</a><a className={`nav-item ${activeSection === 'monthly-report' ? 'active' : ''}`} href="#monthly-report" onClick={handleNavClick('monthly-report')}><Icon name="sheet" />Monthly report{activeSection === 'monthly-report' && <span className="nav-dot" />}</a><div className="sidebar-bottom"><div className="source-icon"><Icon name="sheet" /></div><strong>Connected to Sheets</strong><p>Your reporting source</p><span className="source-status"><i />Live connection</span></div></aside>
     <div className="workspace"><header className="topbar"><div className="mobile-brand"><Brand /></div><div className="breadcrumb">Workspace<Icon name="chevron" size={14} /><strong>{activeSection === 'monthly-report' ? 'Monthly report' : 'Patient overview'}</strong></div><div className="topbar-end"><span className="online-dot" />{error ? 'Connection issue' : 'Google Sheet connected'}<div className="avatar" aria-label="Sudha workspace">S</div></div></header>
-      <main className="dashboard" id="overview"><div className="page-heading"><div><p className="eyebrow">PATIENT ANALYTICS</p><h1>Patient overview<span className="heading-dot">.</span></h1><p className="page-description">A clear view of your appointments and care activity.</p></div><button className="refresh-button" disabled={loading} onClick={refresh}><Icon name="refresh" size={17} className={loading ? 'spin' : ''} />{loading ? 'Refreshing' : 'Refresh data'}</button></div>
+      <main className="dashboard" id="overview"><div className="page-heading"><div><p className="eyebrow">PATIENT ANALYTICS</p><h1>Patient overview<span className="heading-dot">.</span></h1><p className="page-description">A clear view of your appointments and care activity.</p></div><button className="refresh-button" disabled={loading} onClick={() => refresh(true)}><Icon name="refresh" size={17} className={loading ? 'spin' : ''} />{loading ? 'Refreshing' : 'Refresh data'}</button></div>
+        {loading && slowLoading && <p className="page-description" role="status">Google Sheet is still responding. Showing the previous data while it loads.</p>}
         {error && <p className="error-banner" role="alert">{error} Showing the last successful sheet response.</p>}
         <section className="filter-bar" aria-label="Date filters"><div className="location"><Icon name="pin" size={18} /><strong>{city}</strong><span className="location-divider" /><span>{activeYear}{activeMonth !== 'All' ? ` · ${activeMonth}` : ' · All months'}</span></div><div className="date-controls"><div className="mode-switch" role="group" aria-label="Filter mode">{['Year', 'Month'].map(value => <button key={value} aria-pressed={mode === value} className={mode === value ? 'active' : ''} onClick={() => setMode(value)}>{value}</button>)}</div><label className="select-label"><span className="sr-only">Year</span><select aria-label="Year" value={activeYear} onChange={event => { setYear(event.target.value); setMonth('All'); }}>{availableYears.map(value => <option key={value}>{value}</option>)}</select></label>{mode === 'Month' && <label className="select-label"><span className="sr-only">Month</span><select aria-label="Month" value={month} onChange={event => setMonth(event.target.value)}><option value="All">All months</option>{availableMonths.map(value => <option key={value}>{value}</option>)}</select></label>}</div></section>
         <section className="metrics-section" aria-label="Patient summary" aria-live="polite">

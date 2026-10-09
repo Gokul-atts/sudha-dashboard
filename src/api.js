@@ -1,9 +1,11 @@
 export const API_URL = 'https://script.google.com/macros/s/AKfycbwNITAkLpM2MkhTCi0GlDTJzrR9S0lkKoYH99hE7YzDEkppNlDvvSdK9y7EVZhAFyv3/exec';
 
-export async function fetchDashboard(signal) {
+export const DASHBOARD_TIMEOUT_MS = 90000;
+
+export async function fetchDashboard(signal, { forceRefresh = false } = {}) {
   // A plain GET follows Google's redirect without requiring a CORS preflight.
   const url = new URL(API_URL);
-  url.searchParams.set('refresh', String(Date.now()));
+  if (forceRefresh) url.searchParams.set('refresh', String(Date.now()));
   const response = await fetch(url, { signal, redirect: 'follow', credentials: 'omit' });
   if (!response.ok) throw new Error(`Google Sheet request failed (${response.status}).`);
   const text = await response.text();
@@ -16,7 +18,7 @@ export async function fetchDashboard(signal) {
 }
 
 export function validateDataset(data) {
-  if (!Array.isArray(data.cities) || !data.cities.length || !Array.isArray(data.records) ||
+  if (!data || !Array.isArray(data.cities) || !data.cities.length || !Array.isArray(data.records) || !data.records.length ||
     !Array.isArray(data.sheets) || !Array.isArray(data.years) || !data.years.length) {
     throw new Error('The API response is missing city, year, or sheet data.');
   }
@@ -25,17 +27,25 @@ export function validateDataset(data) {
       throw new Error('The API contains an invalid city or period.');
     }
     const required = ['total', 'booked', 'procedure'];
-    const keys = [...required, 'notBooked', 'pending', 'progress', 'visited', 'leadsDropout', 'appointmentDropout', 'opDropout'];
+    const keys = [...required, 'notBooked', 'pending', 'progress', 'visited', 'leadsDropout', 'appointmentDropout', 'opDropout', 'icsi', 'odIcsi'];
     for (const key of keys) {
       if (!required.includes(key) && (record[key] === null || record[key] === undefined)) continue;
       if (!Number.isInteger(record[key]) || record[key] < 0) throw new Error(`Invalid ${key} count in ${record.city}.`);
     }
   }
   for (const city of data.cities) {
+    if (!data.records.some(record => record.city === city)) throw new Error(`No reporting data found for ${city}.`);
     const sheet = data.sheets.find(item => item.city === city);
     if (!sheet || !Array.isArray(sheet.headers) || !Array.isArray(sheet.rows)) throw new Error(`Sheet rows missing for ${city}.`);
     const headers = sheet.headers.map(normalize);
     if (!headers.includes('year') || !headers.includes('month')) throw new Error(`Year or Month column missing for ${city}.`);
+    for (const row of sheet.rows) {
+      if (!Array.isArray(row)) throw new Error(`Invalid sheet row in ${city}.`);
+      for (const key of ['icsi', 'odicsi']) {
+        const column = headers.indexOf(key);
+        if (column >= 0) parseCount(row[column], `${key} in ${city}`);
+      }
+    }
   }
   return data;
 }
@@ -43,6 +53,17 @@ export function validateDataset(data) {
 export const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 export const normalize = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
 export const normalizeYear = value => String(value ?? '').trim().replace(/[–—]/g, '-').replace(/\s+/g, '');
+function parseCount(value, label) {
+  const text = String(value ?? '').trim();
+  const count = !text || text === '-' ? 0 : Number(text.replace(/,/g, ''));
+  if (!Number.isInteger(count) || count < 0) throw new Error(`Invalid ${label} count.`);
+  return count;
+}
+
+export function sumAvailableCounts(rows, key) {
+  if (!rows.length || rows.some(row => typeof row[key] !== 'number')) return null;
+  return rows.reduce((sum, row) => sum + row[key], 0);
+}
 export function normalizeMonth(value) {
   const text = String(value ?? '').trim();
   if (!text || normalize(text) === 'all') return 'All';
@@ -74,16 +95,12 @@ export function getSelection(data, city, year, month) {
   const odIcsiCol = headers.indexOf('odicsi');
   if (icsiCol >= 0) {
     totals.icsi = rows.reduce((sum, row) => {
-      const text = String(row[icsiCol] ?? '').trim();
-      const val = !text || text === '-' ? 0 : Number(text.replace(/,/g, ''));
-      return sum + (isNaN(val) ? 0 : val);
+      return sum + parseCount(row[icsiCol], `ICSI in ${city}`);
     }, 0);
   }
   if (odIcsiCol >= 0) {
     totals.odIcsi = rows.reduce((sum, row) => {
-      const text = String(row[odIcsiCol] ?? '').trim();
-      const val = !text || text === '-' ? 0 : Number(text.replace(/,/g, ''));
-      return sum + (isNaN(val) ? 0 : val);
+      return sum + parseCount(row[odIcsiCol], `OD-ICSI in ${city}`);
     }, 0);
   }
 
