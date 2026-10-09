@@ -80,8 +80,25 @@ export default function App() {
     }
   };
 
+  const isNavigating = useRef(false);
+
+  const handleNavClick = (sectionId) => (e) => {
+    e.preventDefault();
+    setActiveSection(sectionId);
+    isNavigating.current = true;
+    const target = document.getElementById(sectionId);
+    if (target) {
+      const topOffset = sectionId === 'overview' ? 0 : target.getBoundingClientRect().top + window.pageYOffset - 16;
+      window.scrollTo({ top: topOffset, behavior: 'smooth' });
+    }
+    setTimeout(() => {
+      isNavigating.current = false;
+    }, 800);
+  };
+
   useEffect(() => {
     const handleScroll = () => {
+      if (isNavigating.current) return;
       const reportEl = document.getElementById('monthly-report');
       if (reportEl) {
         const rect = reportEl.getBoundingClientRect();
@@ -142,7 +159,7 @@ export default function App() {
   ];
 
   return <div className="app-shell">
-    <aside className="sidebar" aria-label="Workspace"><Brand /><div className="sidebar-label">WORKSPACE</div><a className={`nav-item ${activeSection === 'overview' ? 'active' : ''}`} href="#overview" onClick={() => setActiveSection('overview')}><Icon name="grid" />Overview{activeSection === 'overview' && <span className="nav-dot" />}</a><a className={`nav-item ${activeSection === 'monthly-report' ? 'active' : ''}`} href="#monthly-report" onClick={() => setActiveSection('monthly-report')}><Icon name="sheet" />Monthly report{activeSection === 'monthly-report' && <span className="nav-dot" />}</a><div className="sidebar-bottom"><div className="source-icon"><Icon name="sheet" /></div><strong>Connected to Sheets</strong><p>Your reporting source</p><span className="source-status"><i />Live connection</span></div></aside>
+    <aside className="sidebar" aria-label="Workspace"><Brand /><div className="sidebar-label">WORKSPACE</div><a className={`nav-item ${activeSection === 'overview' ? 'active' : ''}`} href="#overview" onClick={handleNavClick('overview')}><Icon name="grid" />Overview{activeSection === 'overview' && <span className="nav-dot" />}</a><a className={`nav-item ${activeSection === 'monthly-report' ? 'active' : ''}`} href="#monthly-report" onClick={handleNavClick('monthly-report')}><Icon name="sheet" />Monthly report{activeSection === 'monthly-report' && <span className="nav-dot" />}</a><div className="sidebar-bottom"><div className="source-icon"><Icon name="sheet" /></div><strong>Connected to Sheets</strong><p>Your reporting source</p><span className="source-status"><i />Live connection</span></div></aside>
     <div className="workspace"><header className="topbar"><div className="mobile-brand"><Brand /></div><div className="breadcrumb">Workspace<Icon name="chevron" size={14} /><strong>{activeSection === 'monthly-report' ? 'Monthly report' : 'Patient overview'}</strong></div><div className="topbar-end"><span className="online-dot" />{error ? 'Connection issue' : 'Google Sheet connected'}<div className="avatar" aria-label="Sudha workspace">S</div></div></header>
       <main className="dashboard" id="overview"><div className="page-heading"><div><p className="eyebrow">PATIENT ANALYTICS</p><h1>Patient overview<span className="heading-dot">.</span></h1><p className="page-description">A clear view of your appointments and care activity.</p></div><button className="refresh-button" disabled={loading} onClick={refresh}><Icon name="refresh" size={17} className={loading ? 'spin' : ''} />{loading ? 'Refreshing' : 'Refresh data'}</button></div>
         {error && <p className="error-banner" role="alert">{error} Showing the last successful sheet response.</p>}
