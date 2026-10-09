@@ -21,18 +21,20 @@ function readDashboard_() {
   const records = [];
   const sheets = [];
   const normalize = value => String(value ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const isTotal = value => /^(total|yeartotal|grandtotal|subtotal)$/.test(normalize(value));
+  const isTotal = value => /^(total|yeartotal|grandtotal|subtotal|unknown|summary)$/.test(normalize(value));
   const names = {
     total: ['totalpatients', 'totalpatient', 'allleads', 'totalleads'],
     booked: ['bookedappointment', 'bookedappointments', 'confirmedappointments', 'confirmedappointment'],
     notBooked: ['notbooked', 'leadsdropout', 'leaddropout'],
-    procedure: ['tookprocedure', 'completedprocedure', 'procedure', 'procedures'],
+    procedure: ['tookprocedure', 'completedprocedure', 'procedure', 'procedures', 'otprocedures', 'otprocedure'],
     pending: ['bookedbutnoprocedure', 'bookedbutnotprocedure'],
     progress: ['ofwhichinprogress', 'inprogress'],
-    visited: ['opvisited', 'visited', 'opvisits'],
+    visited: ['opvisited', 'visited', 'opvisits', 'oppatients', 'oppatient'],
     leadsDropout: ['leadsdropout', 'leaddropout'],
     appointmentDropout: ['appointmentdropout', 'appointmentsdropout'],
-    opDropout: ['opdropout']
+    opDropout: ['opdropout'],
+    icsi: ['icsi'],
+    odIcsi: ['odicsi']
   };
 
   spreadsheet.getSheets().forEach(sheet => {
@@ -57,7 +59,7 @@ function readDashboard_() {
     });
     const cityRows = [];
     values.slice(headerIndex + 1).forEach((row, offset) => {
-      if (!row.some(value => value.trim()) || isTotal(row[yearColumn]) || isTotal(row[monthColumn])) return;
+      if (!row.some(value => value.trim()) || !String(row[yearColumn] ?? '').trim() || isTotal(row[yearColumn]) || isTotal(row[monthColumn])) return;
       const location = sheet.getName() + ', row ' + (headerIndex + offset + 2);
       const year = String(row[yearColumn]).trim().replace(/[–—]/g, '-').replace(/\s+/g, '');
       if (!/^\d{4}(-\d{4})?$/.test(year)) throw new Error(location + ': invalid Year.');
@@ -88,8 +90,28 @@ function readDashboard_() {
     const rows = records.filter(record => record.city === city);
     [...new Set(rows.map(record => record.year))].forEach(year => {
       const periodRows = rows.filter(record => record.year === year);
-      if (periodRows.some(record => record.month === 'All') && periodRows.some(record => record.month !== 'All')) {
-        throw new Error(city + ', ' + year + ': monthly rows and All rows cannot be mixed.');
+      const hasMonthly = periodRows.some(record => record.month !== 'All');
+      const hasAll = periodRows.some(record => record.month === 'All');
+      if (hasMonthly && hasAll) {
+        // Automatically drop summary 'All' rows for this year so individual monthly rows are used cleanly without double counting
+        for (let i = records.length - 1; i >= 0; i--) {
+          if (records[i].city === city && records[i].year === year && records[i].month === 'All') {
+            records.splice(i, 1);
+          }
+        }
+        const sheetObj = sheets.find(s => s.city === city);
+        if (sheetObj) {
+          const yearCol = sheetObj.headers.map(normalize).indexOf('year');
+          const monthCol = sheetObj.headers.map(normalize).indexOf('month');
+          if (yearCol >= 0 && monthCol >= 0) {
+            sheetObj.rows = sheetObj.rows.filter(row => {
+              const rYear = String(row[yearCol] ?? '').trim().replace(/[–—]/g, '-').replace(/\s+/g, '');
+              const rMonth = String(row[monthCol] ?? '').trim();
+              const isAllMonth = !rMonth || normalize(rMonth) === 'all';
+              return !(rYear === year && isAllMonth);
+            });
+          }
+        }
       }
     });
   });

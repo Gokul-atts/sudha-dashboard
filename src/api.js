@@ -17,7 +17,7 @@ export async function fetchDashboard(signal) {
 
 export function validateDataset(data) {
   if (!Array.isArray(data.cities) || !data.cities.length || !Array.isArray(data.records) ||
-      !Array.isArray(data.sheets) || !Array.isArray(data.years) || !data.years.length) {
+    !Array.isArray(data.sheets) || !Array.isArray(data.years) || !data.years.length) {
     throw new Error('The API response is missing city, year, or sheet data.');
   }
   for (const record of data.records) {
@@ -59,14 +59,36 @@ export function getSelection(data, city, year, month) {
       if (typeof record[key] === 'number') sum[key] = (sum[key] ?? 0) + record[key];
     }
     return sum;
-  }, { total: 0, booked: 0, notBooked: null, procedure: 0, pending: null, progress: null,
-    visited: null, leadsDropout: null, appointmentDropout: null, opDropout: null });
+  }, {
+    total: 0, booked: 0, notBooked: null, procedure: 0, pending: null, progress: null,
+    visited: null, leadsDropout: null, appointmentDropout: null, opDropout: null, icsi: null, odIcsi: null
+  });
   const sheet = data.sheets.find(item => item.city === city);
   const headers = sheet.headers.map(normalize);
   const yearColumn = headers.indexOf('year');
   const monthColumn = headers.indexOf('month');
   const rows = sheet.rows.filter(row => normalizeYear(row[yearColumn]) === year &&
     (month === 'All' || normalizeMonth(row[monthColumn]) === month));
-  return { records, totals, headers: sheet.headers, rows, schema: sheet.schema ||
-    (headers.includes('allleads') || headers.includes('totalleads') ? 'leads' : 'patients') };
+
+  const icsiCol = headers.indexOf('icsi');
+  const odIcsiCol = headers.indexOf('odicsi');
+  if (icsiCol >= 0) {
+    totals.icsi = rows.reduce((sum, row) => {
+      const text = String(row[icsiCol] ?? '').trim();
+      const val = !text || text === '-' ? 0 : Number(text.replace(/,/g, ''));
+      return sum + (isNaN(val) ? 0 : val);
+    }, 0);
+  }
+  if (odIcsiCol >= 0) {
+    totals.odIcsi = rows.reduce((sum, row) => {
+      const text = String(row[odIcsiCol] ?? '').trim();
+      const val = !text || text === '-' ? 0 : Number(text.replace(/,/g, ''));
+      return sum + (isNaN(val) ? 0 : val);
+    }, 0);
+  }
+
+  return {
+    records, totals, headers: sheet.headers, rows, schema: sheet.schema ||
+      (headers.includes('allleads') || headers.includes('totalleads') ? 'leads' : 'patients')
+  };
 }
