@@ -1,9 +1,12 @@
 export const API_URL = 'https://script.google.com/macros/s/AKfycbwNITAkLpM2MkhTCi0GlDTJzrR9S0lkKoYH99hE7YzDEkppNlDvvSdK9y7EVZhAFyv3/exec';
 
-export async function fetchDashboard(signal) {
+export async function fetchDashboard(signal, force = false) {
   // A plain GET follows Google's redirect without requiring a CORS preflight.
   const url = new URL(API_URL);
-  url.searchParams.set('refresh', String(Date.now()));
+  url.searchParams.set('_t', String(Date.now()));
+  if (force) {
+    url.searchParams.set('force', 'true');
+  }
   const response = await fetch(url, { signal, redirect: 'follow', credentials: 'omit' });
   if (!response.ok) throw new Error(`Google Sheet request failed (${response.status}).`);
   const text = await response.text();
@@ -19,6 +22,10 @@ export function validateDataset(data) {
   if (!Array.isArray(data.cities) || !data.cities.length || !Array.isArray(data.records) ||
     !Array.isArray(data.sheets) || !Array.isArray(data.years) || !data.years.length) {
     throw new Error('The API response is missing city, year, or sheet data.');
+  }
+  data.dropoutDetailsAvailable = Array.isArray(data.dropoutList);
+  if (!data.dropoutDetailsAvailable) {
+    data.dropoutList = [];
   }
   for (const record of data.records) {
     if (!data.cities.includes(record.city) || !data.years.includes(record.period) || typeof record.month !== 'string') {
