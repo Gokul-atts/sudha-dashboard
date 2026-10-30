@@ -523,7 +523,7 @@ export default function App() {
     { label: isLeads ? 'Confirmed appointments' : 'Booked appointments', value: format(selected.totals.booked), icon: 'calendar' },
     { label: 'OP (Patients)', value: format(selected.totals.visited), icon: 'users' },
     { label: 'ICSI', value: format(selected.totals.icsi), icon: 'pulse' },
-    { label: 'OT Procedures', value: format(selected.totals.procedure), icon: 'pulse' },
+    { label: 'OT Procedures', value:city=="Erode"?"- -":format(selected.totals.procedure), icon: 'pulse' },
   ];
 
   const dropoutCards = isLeads ? [
